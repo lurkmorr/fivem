@@ -42,7 +42,11 @@
             "production": {
               "optimization": true,
               "outputHashing": "all",
-              "sourceMap": false,
+              "sourceMap": {
+				"scripts": true,
+				"styles": true,
+				"vendor": true
+			  },
               "namedChunks": false,
               "aot": true,
               "extractLicenses": true,

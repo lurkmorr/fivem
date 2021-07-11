@@ -37,6 +37,24 @@ static concurrency::concurrent_queue<std::function<void()>> g_mainQueue;
 
 namespace rage
 {
+	class audCurve
+	{
+	public:
+		// input: units of distance
+		// output: attenuation in dB from -100 to 0
+		static float DefaultDistanceAttenuation_CalculateValue(float x);
+	};
+
+	static hook::cdecl_stub<float(float)> _audCurve_DefaultDistanceAttenuation_CalculateValue([]()
+	{
+		return hook::get_pattern("0F 28 C8 F3 0F 59 08 48 83 C0 04", -0x38);
+	});
+
+	float audCurve::DefaultDistanceAttenuation_CalculateValue(float x)
+	{
+		return _audCurve_DefaultDistanceAttenuation_CalculateValue(x);
+	}
+
 	class audWaveSlot
 	{
 	public:
@@ -842,7 +860,7 @@ class naEnvironmentGroup : public rage::audEnvironmentGroupInterface
 public:
 	static naEnvironmentGroup* Create();
 
-	void Init(void* a2, float a3, int a4, int a5, float a6, int a7);
+	void Init(rage::audEntity* a2, float a3, int a4, int a5, float a6, int a7);
 
 	void SetPosition(const rage::Vec3V& position);
 
@@ -854,7 +872,7 @@ static hook::cdecl_stub<naEnvironmentGroup*()> _naEnvironmentGroup_create([]()
 	return hook::get_pattern("F6 04 02 01 74 0A 8A 05", -0x24);
 });
 
-static hook::thiscall_stub<void(naEnvironmentGroup*, void* a2, float a3, int a4, int a5, float a6, int a7)> _naEnvironmentGroup_init([]()
+static hook::thiscall_stub<void(naEnvironmentGroup*, rage::audEntity* a2, float a3, int a4, int a5, float a6, int a7)> _naEnvironmentGroup_init([]()
 {
 	return hook::get_pattern("80 A7 ? 01 00 00 FC F3 0F 10", -0x22);
 });
@@ -874,9 +892,9 @@ naEnvironmentGroup* naEnvironmentGroup::Create()
 	return _naEnvironmentGroup_create();
 }
 
-void naEnvironmentGroup::Init(void* a2, float a3, int a4, int a5, float a6, int a7)
+void naEnvironmentGroup::Init(rage::audEntity* entity, float a3, int a4, int a5, float a6, int a7)
 {
-	_naEnvironmentGroup_init(this, a2, a3, a4, a5, a6, a7);
+	_naEnvironmentGroup_init(this, entity, a3, a4, a5, a6, a7);
 }
 
 void naEnvironmentGroup::SetPosition(const rage::Vec3V& position)
@@ -1209,7 +1227,7 @@ void MumbleAudioEntity::PreUpdateService(uint32_t)
 
 		if (m_distance > 0.01f)
 		{
-			settings->SetVolumeCurveScale(m_distance / 10.0f);
+			settings->SetVolumeCurveScale(m_distance / 20.0f);
 		}
 		else
 		{
@@ -1338,6 +1356,7 @@ public:
 	virtual void SetResetHandler(const std::function<void()>& resetti) override;
 	virtual void SetPosition(float position[3], float distance, float overrideVolume) override;
 	virtual void PushAudio(int16_t* pcm, int len) override;
+	virtual bool IsTalkingAt(float distance) override;
 
 	void Reset();
 
@@ -1402,6 +1421,20 @@ void MumbleAudioSink::SetPollHandler(const std::function<void(int)>& poller)
 void MumbleAudioSink::SetResetHandler(const std::function<void()>& resetti)
 {
 	m_resetti = resetti;
+}
+
+bool MumbleAudioSink::IsTalkingAt(float distance)
+{
+	static float threshold = -80.0f; // anything below -80dB should be unintelligible.
+
+	float userScale = 1.0f;
+
+	if (m_distance > 0.01f)
+	{
+		userScale = 1.0f / (m_distance / 20.0f);
+	}
+
+	return (rage::audCurve::DefaultDistanceAttenuation_CalculateValue(distance * userScale)) > threshold;
 }
 
 void MumbleAudioSink::SetPosition(float position[3], float distance, float overrideVolume)
@@ -2011,15 +2044,31 @@ static InitFunction initFunction([]()
 	{
 		if (type == rage::InitFunctionType::INIT_CORE && data.funcHash == /*0xE6D408DF*/0xF0F5A94D)
 		{
-			rage::fiPackfile* xm18 = new rage::fiPackfile();
-			if (xm18->OpenPackfile("dlcpacks:/mpchristmas2018/dlc.rpf", true, 3, false))
+			if (xbr::IsGameBuildOrGreater<1734>())
 			{
-				xm18->Mount("xm18:/");
+				rage::fiPackfile* vw = new rage::fiPackfile();
+				if (vw->OpenPackfile("dlcpacks:/mpvinewood/dlc.rpf", true, 3, false))
+				{
+					vw->Mount("vw:/");
 
-				ForceMountDataFile({ "AUDIO_SOUNDDATA", "xm18:/x64/audio/dlcAWXM2018_sounds.dat" });
-				ForceMountDataFile({ "AUDIO_WAVEPACK", "xm18:/x64/audio/sfx/dlc_AWXM2018" });
+					ForceMountDataFile({ "AUDIO_SOUNDDATA", "vw:/x64/audio/dlcvinewood_sounds.dat" });
+					ForceMountDataFile({ "AUDIO_WAVEPACK", "vw:/x64/audio/sfx/dlc_vinewood" });
 
-				audioRunning = true;
+					audioRunning = true;
+				}
+			}
+			else
+			{
+				rage::fiPackfile* xm18 = new rage::fiPackfile();
+				if (xm18->OpenPackfile("dlcpacks:/mpchristmas2018/dlc.rpf", true, 3, false))
+				{
+					xm18->Mount("xm18:/");
+
+					ForceMountDataFile({ "AUDIO_SOUNDDATA", "xm18:/x64/audio/dlcAWXM2018_sounds.dat" });
+					ForceMountDataFile({ "AUDIO_WAVEPACK", "xm18:/x64/audio/sfx/dlc_AWXM2018" });
+
+					audioRunning = true;
+				}
 			}
 		}
 	});
@@ -2099,7 +2148,15 @@ static InitFunction initFunction([]()
 				float volume = rage::GetDbForLinear(std::min(std::min({ g_preferenceArray[PREF_MUSIC_VOLUME], g_preferenceArray[PREF_MUSIC_VOLUME_IN_MP], g_preferenceArray[PREF_SFX_VOLUME] }) / 10.0f, 0.75f));
 				initValues.SetVolume(volume);
 
-				rage::g_frontendAudioEntity->CreateSound_PersistentReference(HashString(musicThemeVariable.GetValue().c_str()), (rage::audSound**)&g_sound, initValues);
+				auto musicTheme = musicThemeVariable.GetValue();
+				auto defaultMusicTheme = xbr::IsGameBuildOrGreater<1734>() ? "dlc_vinewood_health_05_slaves_of_fear_aw_rmx" : "dlc_awxm2018_theme_5_stems";
+
+				if (musicTheme == "dlc_awxm2018_theme_5_stems")
+				{
+					musicTheme = defaultMusicTheme;
+				}
+
+				rage::g_frontendAudioEntity->CreateSound_PersistentReference(HashString(musicTheme.c_str()), (rage::audSound**)&g_sound, initValues);
 
 				if (g_sound)
 				{

@@ -29,6 +29,8 @@
 
 #include <CL2LaunchMode.h>
 
+#include <CfxLocale.h>
+#include <UUIState.h>
 #include <HostSharedData.h>
 
 struct ExternalROSBlob
@@ -176,14 +178,22 @@ static bool InitAccountSteam()
 		if (!getenv("CitizenFX_ToolMode"))
 #endif
 		{
-			RunLauncher(L"ros:steam", true);
+			static HostSharedData<UpdaterUIState> uuiState("CfxUUIState");
+
+			uuiState->SetText(1, gettext("Signing in with Steam"));
+			uuiState->SetProgress(100.0);
+			uuiState->Open();
+
+			RunLauncher(L"ros:steam", true);			
+
+			uuiState->Close();
 		}
 	}
 
 	if (blob->valid)
 	{
 		accountBlob = blob->data;
-		trace("Steam ROS says it's signed in: %s\n", (const char*)&accountBlob[8]);
+		trace("External ROS says it's signed in: %s\n", (const char*)&accountBlob[8]);
 	}
 
 	return blob->valid;
@@ -204,7 +214,15 @@ static bool InitAccountEOS()
 		if (!getenv("CitizenFX_ToolMode"))
 #endif
 		{
+			static HostSharedData<UpdaterUIState> uuiState("CfxUUIState");
+
+			uuiState->SetText(1, gettext("Signing in with Epic"));
+			uuiState->SetProgress(100.0);
+			uuiState->Open();
+
 			RunLauncher(L"ros:epic", true);
+
+			uuiState->Close();
 		}
 	}
 
@@ -263,7 +281,7 @@ void ValidateEpic(int parentPid)
 	blob->triedEpic = true;
 
 	// find a process named EpicGamesLauncher.exe
-	auto egl = OpenProcessByName(L"EpicGamesLauncher.exe", PROCESS_VM_READ);
+	auto egl = OpenProcessByName(L"EpicGamesLauncher.exe", SYNCHRONIZE);
 
 	if (egl == INVALID_HANDLE_VALUE)
 	{
@@ -272,23 +290,44 @@ void ValidateEpic(int parentPid)
 
 	if (!egl)
 	{
-		MessageBoxW(NULL, L"Could not read data from the Epic Games Launcher. If you are running it as administrator, please launch it as regular user.", L"RedM", MB_OK | MB_ICONSTOP);
+		MessageBoxW(NULL, L"Could not read data from the Epic Games Launcher.", L"RedM", MB_OK | MB_ICONSTOP);
 		return;
 	}
 
 	CloseHandle(egl);
 
-	// try finding MTL
-	auto mtl = OpenProcessByName(L"Launcher\\Launcher.exe", SYNCHRONIZE);
+	// try finding MTL (or the launcher stub, for Five)
+	auto launchedProcName =
+#ifndef GTA_FIVE
+	L"Launcher\\Launcher.exe"
+#else
+	L"PlayGTAV.exe"
+#endif
+	;
+
+	auto mtl = OpenProcessByName(launchedProcName, SYNCHRONIZE);
+
+	std::wstring epicName = L"Heather";
+
+#ifdef GTA_FIVE
+	epicName = L"0584d2013f0149a791e7b9bad0eec102%3A6e563a2c0f5f46e3b4e88b5f4ed50cca%3A9d2d0eb64d5c44529cece33fe2a46482";
+#endif
 
 	if (mtl != INVALID_HANDLE_VALUE)
 	{
+#ifdef IS_RDR3
 		MessageBoxW(NULL, L"If you're trying to launch an Epic Games version of RDR2, please make sure the Rockstar Games Launcher is closed. If not, remove EOSSDK-Win64-Shipping.dll from your RDR2 folder.", L"RedM", MB_OK | MB_ICONSTOP);
+#endif
 		return;
 	}
 
+	std::wstring silentVar = L"";
+#ifdef IS_RDR3
+	silentVar = L"&silent=true";
+#endif
+
 	// try to launch RDR-MTL from EGL
-	ShellExecuteW(NULL, L"open", L"com.epicgames.launcher://apps/Heather?action=launch&silent=true", NULL, NULL, SW_SHOWNORMAL);
+	ShellExecuteW(NULL, L"open", va(L"com.epicgames.launcher://apps/%s?action=launch%s", epicName, silentVar), NULL, NULL, SW_SHOWNORMAL);
 
 	// wait for MTL to open
 	int iterations = 0;
@@ -299,18 +338,20 @@ void ValidateEpic(int parentPid)
 	{
 		if (iterations > (60000 / 500))
 		{
+#ifdef IS_RDR3
 			MessageBoxW(NULL, L"If you're trying to launch an Epic Games version of RDR2, please make sure that you can launch it using the Epic Games Launcher first.", L"RedM", MB_OK | MB_ICONSTOP);
+#endif
 			return;
 		}
 
 		Sleep(500);
 
-		mtl = OpenProcessByName(L"Launcher\\Launcher.exe", PROCESS_VM_READ | PROCESS_QUERY_INFORMATION | PROCESS_TERMINATE | PROCESS_SUSPEND_RESUME);
+		mtl = OpenProcessByName(launchedProcName, PROCESS_VM_READ | PROCESS_QUERY_INFORMATION | PROCESS_TERMINATE | PROCESS_SUSPEND_RESUME);
 	}
 
 	if (!mtl)
 	{
-		FatalError("Epic Games Launcher launched the Rockstar Games Launcher in a way we couldn't access. Aborting!");
+		FatalError("Epic Games Launcher launched the Rockstar Games Launcher in a way we couldn't access. Aborting! If you are running it as administrator, please launch it as regular user.");
 	}
 
 	// halt!
@@ -320,6 +361,15 @@ void ValidateEpic(int parentPid)
 	{
 		DebugActiveProcessStop(GetProcessId(mtl));
 		TerminateProcess(mtl, 0);
+
+#ifdef GTA_FIVE
+		auto gameStub = OpenProcessByName(L"PlayGTAV.exe", PROCESS_TERMINATE);
+
+		if (gameStub)
+		{
+			TerminateProcess(gameStub, 0);
+		}
+#endif
 	};
 
 	// get command line
@@ -364,12 +414,20 @@ void ValidateEpic(int parentPid)
 
 	if (!eosDll)
 	{
+#ifdef IS_RDR3
 		FatalError("No Epic DLL.");
+#else
+		return;
+#endif
 	}
 
 	EOS_InitializeOptions eio = { 0 };
 	eio.ApiVersion = 2; //EOS_INITIALIZE_API_LATEST;
+#ifdef IS_RDR3
 	eio.ProductName = "RDR2";
+#else
+	eio.ProductName = "GTAV";
+#endif
 	eio.ProductVersion = "1.0";
 
 	auto _EOS_Initialize = (decltype(&EOS_Initialize))GetProcAddress(eosDll, "EOS_Initialize");
@@ -377,11 +435,19 @@ void ValidateEpic(int parentPid)
 
 	EOS_Platform_Options epo = { 0 };
 	epo.ApiVersion = 5; //EOS_PLATFORM_OPTIONS_API_LATEST;
+#ifdef IS_RDR3
 	epo.ProductId = "1893447b7ea5459b96191a7458075768";
 	epo.SandboxId = "b30b6d1b4dfd4dcc93b5490be5e094e5";
 	epo.ClientCredentials.ClientId = "6b3b277c50a74855ab9beff2d62428aa";
 	epo.ClientCredentials.ClientSecret = "4h8MBChGbrV2woGgr2fdaYn2iWtHdf9F"; // omg this is SO secret, wow
 	epo.DeploymentId = "a59e364fb7f04ea4b0ca52e91281b9dc";
+#else
+	epo.ProductId = "68d2cc08f9a94b8fb51af4f5cfa6d41b";
+	epo.SandboxId = "0584d2013f0149a791e7b9bad0eec102";
+	epo.ClientCredentials.ClientId = "c19208b6eec5423d951186aee0ad7b9c";
+	epo.ClientCredentials.ClientSecret = "YaEL5raCmwNB4TuZf5AU"; // omg this is SO secret, wow
+	epo.DeploymentId = "f8cb4ad3fab34f4ca902480ae7875a82";
+#endif
 	epo.Flags = EOS_PF_DISABLE_OVERLAY;
 
 	auto _EOS_Platform_Create = (decltype(&EOS_Platform_Create))GetProcAddress(eosDll, "EOS_Platform_Create");
@@ -485,7 +551,11 @@ void ValidateEpic(int parentPid)
 	strcpy((char*)&blob->data[8], j.value("Email", "").c_str());
 
 	j = nlohmann::json::object({
+#ifdef IS_RDR3
 		{ "title", "rdr2" },
+#else
+		{ "title", "gta5" },
+#endif
 		{ "env", "prod" },
 		{ "epicPlayerJwt", s },
 		{ "playerTicket", tick },
@@ -719,7 +789,7 @@ static bool InitAccountMTL()
 
 				if (lastEnd)
 				{
-					if (_wcsicmp(lastEnd, L"\\socialclub.dll"))
+					if (_wcsicmp(lastEnd, L"\\socialclub.dll") == 0)
 					{
 						scModule = hMods[i];
 						break;
@@ -811,7 +881,7 @@ void PreInitGameSpec()
 
 static bool InitAccountRemote()
 {
-	return InitAccountSteam() || InitAccountMTL();
+	return InitAccountSteam() || InitAccountMTL() || InitAccountEOS();
 }
 
 #ifdef IS_RDR3

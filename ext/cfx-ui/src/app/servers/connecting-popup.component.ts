@@ -414,6 +414,7 @@ export class ConnectingPopupComponent implements OnInit {
 						this.statusLevel = 1;
 						break;
 					case 'Partial System Outage':
+					case 'Minor Service Outage':
 						this.statusLevel = 2;
 						break;
 					case 'Major Service Outage':
@@ -424,6 +425,7 @@ export class ConnectingPopupComponent implements OnInit {
 						break;
 				}
 			})
+			.catch(a => {});
 	}
 
 	clearElements() {
@@ -460,5 +462,17 @@ export class ConnectingPopupComponent implements OnInit {
 		if (this.closeKeys.includes(event.code)) {
 			this.closeOverlay()
 		}
+	}
+
+	replaceFn(mitch: any): boolean {
+		if (mitch.getType() === 'url') {
+			const url = mitch.getUrl();
+
+			if (url.toLowerCase().indexOf('cfx.re') !== -1) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 }

@@ -585,6 +585,8 @@ void HandleClientDrop(const NetLibraryClientInfo& info)
 }
 
 static CNetGamePlayer*(*g_origGetOwnerNetPlayer)(rage::netObject*);
+static CNetGamePlayer* g_player31;
+bool EnsurePlayer31();
 
 CNetGamePlayer* netObject__GetPlayerOwner(rage::netObject* object)
 {
@@ -602,6 +604,9 @@ CNetGamePlayer* netObject__GetPlayerOwner(rage::netObject* object)
 		{
 			return player;
 		}
+
+		EnsurePlayer31();
+		return g_player31;
 	}
 
 	return g_playerMgr->localPlayer;
@@ -850,7 +855,10 @@ static void SetOwnerStub(rage::netObject* netObject, CNetGamePlayer* newOwner)
 
 	g_origSetOwner(netObject, newOwner);
 
-	if (newOwner->physicalPlayerIndex() == netObject__GetPlayerOwner(netObject)->physicalPlayerIndex())
+	auto oldOwner = netObject__GetPlayerOwner(netObject);
+	auto oldIndex = (oldOwner) ? oldOwner->physicalPlayerIndex() : 31;
+
+	if (newOwner->physicalPlayerIndex() == oldIndex)
 	{
 		return;
 	}
@@ -1485,7 +1493,7 @@ static HookFunction hookFunction([]()
 		{
 			auto location = hook::get_pattern<int32_t>(std::get<0>(bit), std::get<1>(bit));
 
-			*location = (intptr_t)damageArrayReplacement - (intptr_t)location - 4;
+			hook::put<int32_t>(location, (intptr_t)damageArrayReplacement - (intptr_t)location - 4);
 		}
 
 		// 128
@@ -1595,6 +1603,19 @@ static HookFunction hookFunction([]()
 		hook::set_call(&g_origGetOwnerPlayerId, location);
 		hook::call(location, netObject__GetPlayerOwnerId);
 	}
+
+	// ped texture overriding natives
+#ifdef IS_RDR3
+	{
+		auto location = hook::get_pattern("48 85 C9 74 09 E8 ? ? ? ? 8A D8 EB 02", 5);
+		hook::call(location, netObject__GetPlayerOwnerId);
+	}
+
+	{
+		auto location = hook::get_pattern("4C 8D 67 08 48 69 C8 ? ? ? ? 4C 03 E1 45", 52);
+		hook::call(location, netObject__GetPlayerOwnerId);
+	}
+#endif
 
 #ifdef GTA_FIVE
 	hook::jump(hook::get_pattern("C6 41 4A FF C3", 0), netObject__ClearPendingPlayerIndex);
@@ -1978,8 +1999,6 @@ namespace rage
 	};
 }
 
-static CNetGamePlayer* g_player31;
-
 bool EnsurePlayer31()
 {
 	if (!g_player31)
@@ -2056,6 +2075,28 @@ static void EventMgr_AddEvent(void* eventMgr, rage::netGameEvent* ev)
 		}
 
 		if (count >= 5)
+		{
+			delete ev;
+			return;
+		}
+	}
+#elif IS_RDR3
+	// speech events (PED_SPEECH_*_EVENT) in RDR3 are very spammy sometimes and can cause pool overflow
+	if (strcmp(ev->GetName(), "PED_SPEECH_") != -1)
+	{
+		int count = 0;
+
+		for (auto& eventPair : g_events)
+		{
+			auto [key, tup] = eventPair;
+
+			if (tup.ev && strcmp(tup.ev->GetName(), "PED_SPEECH_") != -1)
+			{
+				count++;
+			}
+		}
+
+		if (count >= 50)
 		{
 			delete ev;
 			return;

@@ -94,6 +94,10 @@ export class HomeComponent implements OnInit, OnDestroy {
 		});
 	}
 
+	get topFlagCountry() {
+		return this.topServer?.data?.vars?.locale?.split('-')[1]?.toLowerCase() ?? 'aq';
+	}
+
 	ngOnInit() {
 		this.brandingName = this.gameService.brandingName;
 		this.currentAccount = this.discourseService.currentUser;
@@ -146,6 +150,7 @@ export class HomeComponent implements OnInit, OnDestroy {
 			if (!isAddressServer) {
 				try {
 					this.lastServer.server = await this.serversService.getServer(this.lastServer.historyEntry.address);
+					this.lastServer.sanitizedIcon = this.lastServer.server.sanitizedUri;
 					this.lastServer.status = HistoryServerStatus.Online;
 
 					done();
@@ -159,6 +164,15 @@ export class HomeComponent implements OnInit, OnDestroy {
 				this.lastServer.server = await this.gameService.queryAddress(
 					this.serversService.parseAddress(this.lastServer.historyEntry.address),
 				);
+
+				this.lastServer.sanitizedIcon = this.lastServer.server.sanitizedUri;
+
+				// replace the server with a clean server-list server if need be
+				this.serversService.tryGetJoinServer(this.lastServer.historyEntry.address).then(server => {
+					if (server) {
+						this.lastServer.server = server;
+					}
+				});
 
 				this.lastServer.status = HistoryServerStatus.Online;
 			} catch (e) {
@@ -188,6 +202,7 @@ export class HomeComponent implements OnInit, OnDestroy {
 						this.statusLevel = 1;
 						break;
 					case 'Partial System Outage':
+					case 'Minor Service Outage':
 						this.statusLevel = 2;
 						break;
 					case 'Major Service Outage':
@@ -198,6 +213,7 @@ export class HomeComponent implements OnInit, OnDestroy {
 						break;
 				}
 			})
+			.catch(a => {});
 	}
 	startStatusCheckerLoop() {
 		return setInterval(() => { this.updateStatus(); }, 1000 * 20 );
@@ -299,5 +315,9 @@ export class HomeComponent implements OnInit, OnDestroy {
 	async linkAccount() {
 		const url = await this.discourseService.generateAuthURL();
 		this.gameService.openUrl(url);
+	}
+
+	tweetTrack(idx: number, tweet: Tweet) {
+		return tweet.id;
 	}
 }

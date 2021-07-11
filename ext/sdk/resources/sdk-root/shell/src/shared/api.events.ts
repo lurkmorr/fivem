@@ -23,7 +23,7 @@ export const projectApi = {
   pathsState: 'project:pathsState',
 
   updateResources: 'project:updateResources',
-  setResourceConfig: 'project:setResourceConfig',
+  setAssetConfig: 'project:setResourceConfig',
 
   fsUpdate: 'project:fsUpdate',
   resourcesUpdate: 'project:resourcesUpdate',
@@ -150,6 +150,14 @@ export const worldEditorApi = {
   stop: 'world-editor:stop',
   stopped: 'world-editor:stopped',
 
+  mapLoaded: 'world-editor:mapLoaded',
   setCam: 'world-editor:setCam',
   applyPatch: 'world-editor:applyPatch',
+  deleteAddition: 'world-editor:deleteAddition',
+  setAddition: 'world-editor:setAddition',
+  applyAdditionChange: 'world-editor:applyAdditionChange',
+  setAdditionGroup: 'world-editor:setAdditionGroup',
+  createAdditionGroup: 'world-editor:createAdditionGroup',
+  deleteAdditionGroup: 'world-editor:deleteAdditionGroup',
+  setAdditionGroupLabel: 'world-editor:setAdditionGroupName',
 };

@@ -8,8 +8,6 @@ import { GameService } from '../../../game.service';
 
 import { Subject } from 'rxjs';
 
-import 'rxjs/add/operator/throttleTime';
-
 import { ServerFilters, ServerSorting, ServerSortBy, ServerSortDirection } from './server-filter-container';
 import { DirectConnectBackendComponent } from '../../direct/direct-connect-backend.component';
 import { LocalStorage } from '../../../local-storage';
@@ -293,7 +291,7 @@ export class ServerFilterComponent implements OnInit, OnDestroy {
 	}
 
 	acceptAutocomplete(entry: ServerAutocompleteEntry) {
-		if (entry?.completion !== '') {
+		if ((entry?.completion ?? '') !== '') {
 			this.filters.searchText = this.filters.searchText.replace(/(\s?)([^\s]*)$/, (str, space) => space + entry.completion) + ' ';
 			this.filtersService.setFilters(this.filters);
 

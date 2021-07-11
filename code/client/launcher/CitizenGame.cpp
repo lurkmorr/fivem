@@ -17,6 +17,9 @@
 
 #include <HostSharedData.h>
 #include <CfxState.h>
+#include <UUIState.h>
+
+#include <CfxLocale.h>
 
 #include <Error.h>
 
@@ -137,6 +140,8 @@ int ReturnInt()
 
 static void* DeleteVideo(void*, char* videoName)
 {
+	DWORD oldProtect;
+	VirtualProtect(videoName, 4, PAGE_READWRITE, &oldProtect);
 	strcpy(videoName, "nah");
 	return nullptr;
 }
@@ -208,6 +213,12 @@ VOID WINAPI GetStartupInfoWHook(_Out_ LPSTARTUPINFOW lpStartupInfo)
 		return;
 	}
 
+	static HostSharedData<UpdaterUIState> uuiState("CfxUUIState");
+
+	uuiState->SetText(1, gettext("Analyzing game data"));
+	uuiState->SetProgress(100.0);
+	uuiState->OpenWhenExpired();
+
 	InitialGameHook();
 
 	if (!g_launcher->PostLoadGame(GetModuleHandle(nullptr), nullptr))
@@ -219,6 +230,8 @@ VOID WINAPI GetStartupInfoWHook(_Out_ LPSTARTUPINFOW lpStartupInfo)
 	{
 		ExitProcess(0);
 	}
+
+	uuiState->Close();
 }
 
 static LONG NTAPI HandleVariant(PEXCEPTION_POINTERS exceptionInfo)
@@ -606,6 +619,13 @@ void CitizenGame::Launch(const std::wstring& gamePath, bool isMainGame)
 	});
 
 	exeLoader.LoadIntoModule(exeModule);
+
+#if defined(GTA_FIVE) && defined(RWX_TEST)
+	if (!getenv("CitizenFX_ToolMode"))
+	{
+		exeLoader.Protect();
+	}
+#endif
 
 	// overwrite our header
 #if defined(PAYNE)

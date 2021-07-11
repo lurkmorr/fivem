@@ -451,7 +451,23 @@ MumbleAudioOutput::ClientAudioState::~ClientAudioState()
 		});
 	}
 
-	context = {};
+	// destroy the lab::AudioContext off-thread as it may be blocking for a while
+	struct DtorWorker
+	{
+		std::shared_ptr<lab::AudioContext> audCxt;
+	};
+
+	auto dtorWorker = new DtorWorker();
+	dtorWorker->audCxt = std::move(context);
+
+	QueueUserWorkItem([](void* data) -> DWORD
+	{
+		auto dtorWorker = (DtorWorker*)data;
+		delete dtorWorker;
+
+		return 0;
+	},
+	dtorWorker, 0);
 
 	if (voice)
 	{
@@ -548,7 +564,8 @@ void MumbleAudioOutput::ExternalAudioState::PushPosition(MumbleAudioOutput* base
 	auto emitterPos = XMVectorSet(position[0], position[1], position[2], 0.0f);
 	auto listenerPos = XMVectorSet(baseIo->m_listener.Position.x, baseIo->m_listener.Position.y, baseIo->m_listener.Position.z, 0.0f);
 
-	bool shouldHear = (abs(distance) < 0.01f) ? true : (XMVectorGetX(XMVector3LengthSq(emitterPos - listenerPos)) < (distance * distance));
+	// default algorithm: (abs(distance) < 0.01f) ? true : (XMVectorGetX(XMVector3LengthSq(emitterPos - listenerPos)) < (distance * distance))
+	bool shouldHear = sink->IsTalkingAt(XMVectorGetX(XMVector3Length(emitterPos - listenerPos)));
 
 	if (client->overrideVolume >= 0.0f)
 	{

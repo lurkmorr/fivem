@@ -14,6 +14,7 @@
 #include <fcntl.h>
 
 #include <CfxState.h>
+#include <UUIState.h>
 #include <HostSharedData.h>
 
 #include <array>
@@ -92,6 +93,9 @@ HANDLE g_uiExitEvent;
 
 bool IsUnsafeGraphicsLibrary();
 void MigrateCacheFromat202105();
+void UI_DestroyTen();
+
+HMODULE tlsDll;
 
 int RealMain()
 {
@@ -158,6 +162,8 @@ int RealMain()
 	SetEnvironmentVariable(L"PATH", newPath.c_str());
 
 	SetDllDirectory(MakeRelativeCitPath(L"bin").c_str()); // to prevent a) current directory DLL search being disabled and b) xlive.dll being taken from system if not overridden
+
+	tlsDll = LoadLibraryW(MakeRelativeCitPath(L"CitiLaunch_TLSDummy.dll").c_str());
 
 	wchar_t initCwd[1024];
 	GetCurrentDirectoryW(std::size(initCwd), initCwd);
@@ -298,6 +304,12 @@ int RealMain()
 
 	XBR_EarlySelect();
 #endif
+
+	if (!tlsDll)
+	{
+		tlsDll = LoadLibraryW(MakeRelativeCitPath(L"CitiLaunch_TLSDummy.dll").c_str());
+		assert(tlsDll);
+	}
 
 	// add DLL directories post-installer (in case we moved into a Product.app directory)
 	addDllDirs();
@@ -674,47 +686,76 @@ int RealMain()
 
 	auto minModeManifest = InitMinMode();
 
-	g_uiExitEvent = CreateEvent(NULL, FALSE, FALSE, va(L"CitizenFX_PreUIExit%s", IsCL2() ? L"CL2" : L""));
-	g_uiDoneEvent = CreateEvent(NULL, FALSE, FALSE, va(L"CitizenFX_PreUIDone%s", IsCL2() ? L"CL2" : L""));
+	g_uiExitEvent = CreateEventW(NULL, TRUE, FALSE, va(L"CitizenFX_PreUIExit%s", IsCL2() ? L"CL2" : L""));
+	g_uiDoneEvent = CreateEventW(NULL, FALSE, FALSE, va(L"CitizenFX_PreUIDone%s", IsCL2() ? L"CL2" : L""));
 
 	if (initState->IsMasterProcess() && !toolMode && !launch::IsSDK())
 	{
-		std::thread([/*tui = std::move(tui)*/minModeManifest]() mutable
+		std::thread([minModeManifest]() mutable
 		{
 			static HostSharedData<CfxState> initState("CfxInitState");
+			static HostSharedData<UpdaterUIState> uuiState("CfxUUIState");
 
-#ifndef _DEBUG
-			if (!initState->isReverseGame)
+#if !defined(_DEBUG)
+			auto runUUILoop = [minModeManifest](bool firstLoop)
 			{
-				//auto tuiTen = std::move(tui);
+				static constexpr const uint32_t loadWait = 5000;
 				auto tuiTen = UI_InitTen();
 
 				// say hi
 				UI_DoCreation(false);
 
+				std::string firstTitle = fmt::sprintf("Starting %s",
+					minModeManifest->Get("productName", ToNarrow(PRODUCT_NAME)));
+				std::string firstSubtitle = (wcsstr(GetCommandLineW(), L"-switchcl"))
+					? gettext("Transitioning to another build...") 
+					: minModeManifest->Get("productSubtitle", gettext("We're getting there."));
+
+				std::string lastTitle = firstTitle;
+				std::string lastSubtitle = firstSubtitle;
+
 				auto st = GetTickCount64();
-				UI_UpdateText(0, va(L"Starting %s...", 
-					ToWide(minModeManifest->Get("productName", ToNarrow(PRODUCT_NAME)))));
+				UI_UpdateText(0, ToWide(lastTitle).c_str());
+				UI_UpdateText(1, ToWide(lastSubtitle).c_str());
 
-				if (wcsstr(GetCommandLineW(), L"-switchcl"))
+				auto expired = [&st]()
 				{
-					UI_UpdateText(1, va(gettext(L"Transitioning to another build...")));
-				}
-				else
-				{
-					UI_UpdateText(1, ToWide(minModeManifest->Get("productSubtitle", gettext("We're getting there."))).c_str());
-				}
+					return GetTickCount64() >= (st + loadWait);
+				};
 
-				while (GetTickCount64() < (st + 3500))
+				auto shouldBeOpen = [expired]()
 				{
-					HANDLE hs[] =
+					if (!uuiState->finalized)
 					{
+						return true;
+					}
+
+					return !expired();
+				};
+
+				auto shouldBeCustom = [expired, firstLoop]()
+				{
+					// UUI customizations do not apply if finalized
+					if (uuiState->finalized)
+					{
+						return false;
+					}
+
+					return (uuiState->waitForExpiration && firstLoop) ? expired() : true;
+				};
+
+				bool wasCustom = false;
+
+				while (shouldBeOpen())
+				{
+					HANDLE hs[] = {
 						g_uiExitEvent
 					};
 
 					auto res = MsgWaitForMultipleObjects(std::size(hs), hs, FALSE, 50, QS_ALLEVENTS);
 
-					if (res == WAIT_OBJECT_0)
+					// bail out if wait failed, or if the handle is signaled
+					if (res == WAIT_OBJECT_0 || res == WAIT_FAILED)
 					{
 						break;
 					}
@@ -726,14 +767,78 @@ int RealMain()
 						DispatchMessage(&msg);
 					}
 
-					UI_UpdateProgress((GetTickCount64() - st) / 35.0);
+					if (uuiState->progress < 0.0 || !shouldBeCustom())
+					{
+						UI_UpdateProgress((GetTickCount64() - st) / (loadWait / 100.0));
+					}
+					else
+					{
+						UI_UpdateProgress(uuiState->progress);
+					}
+
+					if (shouldBeCustom())
+					{
+						wasCustom = true;
+
+						std::string titleStr = uuiState->title;
+						std::string subtitleStr = uuiState->subtitle;
+
+						if (!titleStr.empty() && titleStr != lastTitle)
+						{
+							UI_UpdateText(0, ToWide(titleStr).c_str());
+							lastTitle = titleStr;
+						}
+
+						if (!subtitleStr.empty() && subtitleStr != lastSubtitle)
+						{
+							UI_UpdateText(1, ToWide(subtitleStr).c_str());
+							lastSubtitle = subtitleStr;
+						}
+					}
+					else if (wasCustom)
+					{
+						UI_UpdateText(0, ToWide(firstTitle).c_str());
+						UI_UpdateText(1, ToWide(firstSubtitle).c_str());
+
+						st = GetTickCount64();
+
+						wasCustom = false;
+					}
 				}
 
 				UI_DoDestruction();
+			};
+
+			if (!initState->isReverseGame)
+			{
+				runUUILoop(true);
 			}
 #endif
 
 			SetEvent(g_uiDoneEvent);
+
+#if !defined(_DEBUG)
+			if (!initState->isReverseGame)
+			{
+				// run UI polling loop if need be, anyway
+				while (true)
+				{
+					// UI exit event ends the thread
+					if (WaitForSingleObject(g_uiExitEvent, 50) != WAIT_TIMEOUT)
+					{
+						break;
+					}
+
+					// did we get asked to open UUI again?
+					if (!uuiState->finalized)
+					{
+						runUUILoop(false);
+					}
+				}
+			}
+#endif
+
+			UI_DestroyTen();
 		}).detach();
 	}
 

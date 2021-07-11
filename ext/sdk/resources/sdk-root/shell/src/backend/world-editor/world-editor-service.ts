@@ -5,6 +5,7 @@ import { ServerResourceDescriptor, ServerStartRequest } from "backend/game-serve
 import { GameServerService } from "backend/game-server/game-server-service";
 import { NotificationService } from "backend/notification/notification-service";
 import { ProjectAccess } from "backend/project/project-access";
+import { __DEBUG_MODE_TOGGLES__ } from "constants/debug-constants";
 import { inject, injectable, postConstruct } from "inversify";
 import { worldEditorApi } from "shared/api.events";
 import { WorldEditorStartRequest } from "shared/api.requests";
@@ -80,19 +81,22 @@ export class WorldEditorService implements ApiContribution {
     const project = this.projectAccess.getInstance();
 
     // If server is already running and running latest update channel - we can't reuse that
-    if (this.gameServerService.isUp() && project.getUpdateChannel() === serverUpdateChannels.latest) {
-      this.resourcesToRestore = this.gameServerService.getResources();
+    // But there still is a bug in fxserver that prevents this: too many simultaneous stop events
+    // if (this.gameServerService.isUp() && project.getUpdateChannel() === serverUpdateChannels.latest) {
+    //   this.resourcesToRestore = this.gameServerService.getResources();
 
-      this.gameServerService.setResources([]);
-      this.gameServerService.sendCommand(ENABLE_WORLD_EDITOR_SERVER_MODE_CMD);
+    //   this.gameServerService.setResources([]);
+    //   this.gameServerService.sendCommand(ENABLE_WORLD_EDITOR_SERVER_MODE_CMD);
 
-      // restart sdk-game so new mode catches in
-      this.gameServerService.restartResource('sdk-game');
+    //   // restart sdk-game so new mode catches in
+    //   this.gameServerService.restartResource('sdk-game');
 
-      return openPromise;
+    //   return openPromise;
+    // }
+
+    if (this.gameServerService.isUp()) {
+      await this.gameServerService.stop();
     }
-
-    await this.gameServerService.stop();
 
     const serverStartRequest: ServerStartRequest = {
       fxserverCwd: project.getFxserverCwd(),
@@ -107,7 +111,9 @@ export class WorldEditorService implements ApiContribution {
     this.gameServerService.setResources([]);
 
     try {
-      await this.gameServerService.start(serverStartRequest);
+      if (false === __DEBUG_MODE_TOGGLES__.WORLD_EDITOR_UI_ONLY) {
+        await this.gameServerService.start(serverStartRequest);
+      }
 
       return openPromise;
     } catch (e) {
@@ -134,7 +140,11 @@ export class WorldEditorService implements ApiContribution {
       return;
     }
 
-    await this.gameServerService.stop();
+    if (false === __DEBUG_MODE_TOGGLES__.WORLD_EDITOR_UI_ONLY) {
+      await this.gameServerService.stop();
+    }
+
+    this.running = false;
   }
 
   isRunning(): boolean {

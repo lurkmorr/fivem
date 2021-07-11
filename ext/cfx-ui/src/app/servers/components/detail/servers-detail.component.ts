@@ -97,6 +97,54 @@ export class ServersDetailComponent implements OnInit, OnDestroy {
 		return this.tagService.getLocaleDisplayName(lang);
 	}
 
+	get joinable() {
+		return (!this.eol && !this.server.data?.private);
+	}
+
+	get privateLabel() {
+        return this.translation.translate('#ServerDetail_PrivateDisable', null, this.locale.language);
+    }
+
+	get offlineLabel() {
+        return this.translation.translate('#ServerDetail_OfflineDisable', null, this.locale.language);
+    }
+
+	get joinableLabel() {
+		if (this.eol) {
+			return this.eolLabel;
+		}
+
+		if (this.server.data?.private) {
+			return this.privateLabel;
+		}
+
+		if (this.server.data?.fallback) {
+			return this.offlineLabel;
+		}
+
+		return '';
+	}
+
+	get serverWarning() {
+		if (this.eol) {
+			return '#ServerDetail_EOLWarning';
+		}
+
+		if (this.eos) {
+			return '#ServerDetail_SupportWarning';
+		}
+
+		if (this.server.data?.private) {
+			return '#ServerDetail_PrivateWarning';
+		}
+
+		if (this.server.data?.fallback) {
+			return '#ServerDetail_OfflineWarning';
+		}
+
+		return '';
+	}
+
 	get onesyncEnabled() {
 		return this.server?.data?.vars?.onesync_enabled === 'true';
 	}
@@ -180,14 +228,14 @@ export class ServersDetailComponent implements OnInit, OnDestroy {
 
 				this.fetchApFeed();
 
-				const resources = (<string[]>a.data.resources)
+				const resources = (<string[]>(a?.data?.resources ?? []))
 					.filter(res => res !== '_cfx_internal' && res !== 'hardcap' && res !== 'sessionmanager');
 
 				this.resources = resources.sort(this.collator.compare);
 
 				this.resourceCount = resources.length;
 
-				this.serverVariables = Object.entries(a.data.vars as { [key: string]: string })
+				this.serverVariables = Object.entries((a?.data.vars ?? {}) as { [key: string]: string })
 					.map(([key, value]) => ({ key, value }))
 					.filter(({ key }) => this.disallowedVars.indexOf(key) < 0)
 					.filter(({ key }) => key.indexOf('banner_') < 0)
@@ -198,7 +246,7 @@ export class ServersDetailComponent implements OnInit, OnDestroy {
 					.filter(({ key, value }) => key !== 'sv_scriptHookAllowed' || value === 'true')
 					.map(pair => this.filterFuncs[pair.key] ? this.filterFuncs[pair.key](pair) : pair);
 
-				this.meta.setTag('og:image', this.server.iconUri);
+				this.meta.setTag('og:image', this.server?.iconUri);
 				this.meta.setTag('og:type', 'website');
 				this.meta.setTitle(this.server.hostname.replace(/\^[0-9]/g, ''));
 				this.meta.setTag('og:description', `${this.server.currentPlayers} players on ${this.server.data.mapname}`);
@@ -207,7 +255,7 @@ export class ServersDetailComponent implements OnInit, OnDestroy {
 	}
 
 	openOwner() {
-		this.gameService.openUrl(this.server.data?.ownerProfile ?? '');
+		this.gameService.openUrl(this.server?.data?.ownerProfile ?? '');
 	}
 
 	trackPlayer(index: number, player: any) {
@@ -238,15 +286,26 @@ export class ServersDetailComponent implements OnInit, OnDestroy {
 	}
 
 	isFavorite() {
-		return this.gameService.isMatchingServer('favorites', this.server);
+		if (this.server) {
+			return this.gameService.isMatchingServer('favorites', {
+				EndPoint: this.server.address,
+				Data: this.server.data
+			});
+		}
+
+		return false;
 	}
 
 	addFavorite() {
-		this.gameService.toggleListEntry('favorites', this.server, true);
+		if (this.server) {
+			this.gameService.toggleListEntry('favorites', this.server, true);
+		}
 	}
 
 	removeFavorite() {
-		this.gameService.toggleListEntry('favorites', this.server, false);
+		if (this.server) {
+			this.gameService.toggleListEntry('favorites', this.server, false);
+		}
 	}
 
 	ngOnInit() {

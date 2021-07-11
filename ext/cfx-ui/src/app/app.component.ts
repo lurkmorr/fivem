@@ -121,6 +121,10 @@ function createGameView(canvas: HTMLCanvasElement) {
 		failIfMajorPerformanceCaveat: false
 	}) as WebGLRenderingContext;
 
+	if (!gl) {
+		return null;
+	}
+
 	let render = () => { };
 
 	function createStuff() {
@@ -323,7 +327,7 @@ export class AppComponent implements OnInit, AfterViewInit {
 
     get stylish() {
         if (this.customBackdrop) {
-            return this.sanitizer.bypassSecurityTrustUrl(`url(https://nui-backdrop/user.png?${md5(this.customBackdrop)})`);
+            return this.sanitizer.bypassSecurityTrustUrl(`url(https://nui-backdrop/user.png?${md5(this.customBackdrop ?? '')})`);
         }
 
         return null;
@@ -334,11 +338,20 @@ export class AppComponent implements OnInit, AfterViewInit {
 			return;
 		}
 
-		this.gameView = createGameView(this.gameCanvas.nativeElement);
-		this.gameView.resize(window.innerWidth, window.innerHeight);
+		this.zone.runOutsideAngular(() => {
+			setTimeout(() => {
+				// double check in case it got removed
+				if (!this.gameCanvas) {
+					return;
+				}
 
-		window.addEventListener('resize', () => {
-			this.gameView.resize(window.innerWidth, window.innerHeight);
+				this.gameView = createGameView(this.gameCanvas.nativeElement);
+				this.gameView?.resize(window.innerWidth, window.innerHeight);
+
+				window.addEventListener('resize', () => {
+					this.gameView?.resize(window.innerWidth, window.innerHeight);
+				});
+			}, 150);
 		});
 	}
 

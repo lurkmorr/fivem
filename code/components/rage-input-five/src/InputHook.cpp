@@ -10,6 +10,8 @@
 #include <CrossBuildRuntime.h>
 #include <timeapi.h> // timeGetTime()
 
+#include <GlobalInput.h>
+
 static WNDPROC origWndProc;
 
 static bool g_isFocused = true;
@@ -84,12 +86,36 @@ bool InputHook::IsMouseButtonDown(int buttonFlag)
 	return ((*g_mouseButtons) & buttonFlag);
 }
 
+static bool GlobalInputIsDown(int vKey)
+{
+	static bool keys[512];
+
+	static auto gInput = []()
+	{
+		auto gInput = CreateGlobalInputHandler();
+		gInput->OnKey.Connect([](DWORD vKey, bool down)
+		{
+			keys[vKey] = down;
+		});
+
+		return gInput;
+	}();
+
+	return keys[vKey];
+}
+
 bool InputHook::IsKeyDown(int vk_keycode)
 {
 	if (vk_keycode < 0 || vk_keycode > 255)
 	{
 		return false;
 	}
+
+	if (GlobalInputIsDown(vk_keycode))
+	{
+		return true;
+	}
+
 	return g_gameKeyArray[vk_keycode] & 0x80;
 }
 
@@ -547,6 +573,11 @@ static void rage__ioPad__Update(rage::ioPad* thisptr, bool onlyVibrate)
 	ReleaseMutex(rgd->inputMutex);
 }
 
+static int Return0()
+{
+	return 0;
+}
+
 static HookFunction hookFunction([]()
 {
 	static int* captureCount = hook::get_address<int*>(hook::get_pattern("48 3B 05 ? ? ? ? 0F 45 CA 89 0D ? ? ? ? 48 83 C4 28", 12));
@@ -570,7 +601,7 @@ static HookFunction hookFunction([]()
 
 	origWndProc = (WNDPROC)(location + *(int32_t*)location + 4);
 
-	*(int32_t*)location = (intptr_t)(hook::AllocateFunctionStub(grcWindowProcedure)) - (intptr_t)location - 4;
+	hook::put<int32_t>(location, (intptr_t)(hook::AllocateFunctionStub(grcWindowProcedure)) - (intptr_t)location - 4);
 
 	// disable mouse focus function
 	void* patternMatch = hook::pattern("74 0D 38 1D ? ? ? ? 74 05 E8 ? ? ? ? 48 39").count(1).get(0).get<void>(10);
@@ -646,6 +677,9 @@ static HookFunction hookFunction([]()
 		auto changeMouseInput = hook::get_pattern("0F 84 ? ? ? ? 8B CB E8 ? ? ? ? E9", 8);
 		hook::nop(changeMouseInput, 5);
 	}
+
+	// cancel out ioLogitechLedDevice
+	hook::jump(hook::get_pattern("85 C0 0F 85 ? ? 00 00 48 8B CB FF 15", -0x77), Return0);
 });
 
 fwEvent<HWND, UINT, WPARAM, LPARAM, bool&, LRESULT&> InputHook::DeprecatedOnWndProc;

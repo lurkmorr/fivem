@@ -79,6 +79,30 @@ inline uintptr_t get_unadjusted(T address)
 	return (uintptr_t)address;
 }
 
+// gets the current executable TLS offset
+template<typename T = char*>
+T get_tls()
+{
+	// ah, the irony in using TLS to get TLS
+	static auto tlsIndex = ([]()
+	{
+		auto base = (char*)GetModuleHandle(NULL);
+		auto moduleBase = (PIMAGE_DOS_HEADER)base;
+		auto ntBase = (PIMAGE_NT_HEADERS)(base + moduleBase->e_lfanew);
+		auto tlsBase = (PIMAGE_TLS_DIRECTORY)(base + ntBase->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress);
+
+		return reinterpret_cast<uint32_t*>(tlsBase->AddressOfIndex);
+	})();
+
+	#if defined(_M_IX86)
+	LPVOID* tlsBase = (LPVOID*)__readfsdword(0x2C);
+#elif defined(_M_AMD64)
+	LPVOID* tlsBase = (LPVOID*)__readgsqword(0x58);
+#endif
+
+	return (T)tlsBase[*tlsIndex];
+}
+
 struct pass
 {
 	template<typename ...T> pass(T...) {}
@@ -122,7 +146,12 @@ inline void put(AddressType address, ValueType value)
 {
 	adjust_base(address);
 
+	DWORD oldProtect;
+	VirtualProtect((void*)address, sizeof(value), PAGE_EXECUTE_READWRITE, &oldProtect);
+
 	memcpy((void*)address, &value, sizeof(value));
+
+	VirtualProtect((void*)address, sizeof(value), oldProtect, &oldProtect);
 }
 
 template<typename ValueType, typename AddressType>
@@ -143,7 +172,12 @@ inline void nop(AddressType address, size_t length)
 {
 	adjust_base(address);
 
+	DWORD oldProtect;
+	VirtualProtect((void*)address, length, PAGE_EXECUTE_READWRITE, &oldProtect);
+
 	memset((void*)address, 0x90, length);
+
+	VirtualProtect((void*)address, length, oldProtect, &oldProtect);
 }
 
 template<typename AddressType>
